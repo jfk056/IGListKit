@@ -745,8 +745,9 @@ typedef struct OffsetRange {
 
     for (id object in data.toObjects) {
         // check if the item has changed instances or is new
+        // 5.0.5: Only send update when the object are different
         const NSInteger oldSection = [map sectionForObject:object];
-        if (oldSection == NSNotFound || [map objectForSection:oldSection] != object) {
+        if (oldSection == NSNotFound || ![[map objectForSection:oldSection] isEqual:object]) {
             [updatedObjects addObject:object];
         }
     }
