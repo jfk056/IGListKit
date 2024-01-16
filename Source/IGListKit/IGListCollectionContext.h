@@ -52,6 +52,11 @@ NS_SWIFT_NAME(ListCollectionContext)
 @property (nonatomic, readonly) CGPoint containerContentOffset;
 
 /**
+ The trait collection of the collection view.
+ */
+@property (nonatomic, nullable, readonly) UITraitCollection *traitCollection;
+
+/**
  The current scrolling traits of the underlying collection view.
  */
 @property (nonatomic, readonly) IGListCollectionScrollingTraits scrollingTraits;

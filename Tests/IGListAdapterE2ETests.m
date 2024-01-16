@@ -16,6 +16,7 @@
 #import "IGListAdapterUpdater.h"
 #import "IGListAdapterUpdaterInternal.h"
 #import "IGListTestCase.h"
+#import "IGListTestCollectionViewLayout.h"
 #import "IGListTestHelpers.h"
 #import "IGListTestOffsettingLayout.h"
 #import "IGListUpdateTransactionBuilder.h"
@@ -1404,12 +1405,12 @@
 
     XCTestExpectation *expectation = genExpectation;
     [sectionController.collectionContext performBatchAnimated:YES updates:^(id<IGListBatchContext> batchContext) {
-        object.value = @2;
+        object.value = @3;
         [batchContext deleteInSectionController:sectionController atIndexes:[NSIndexSet indexSetWithIndex:0]];
         [batchContext deleteInSectionController:sectionController atIndexes:[NSIndexSet indexSetWithIndex:0]];
     } completion:^(BOOL finished2) {
         XCTAssertEqual([self.collectionView numberOfSections], 1);
-        XCTAssertEqual([self.collectionView numberOfItemsInSection:0], 2);
+        XCTAssertEqual([self.collectionView numberOfItemsInSection:0], 3);
         [expectation fulfill];
     }];
     [self waitForExpectationsWithTimeout:30 handler:nil];
@@ -1732,6 +1733,24 @@
 
     IGAssertEqualPoint(initialAttribute.center, attribute.center.x + offset.x, attribute.center.y + offset.y);
     IGAssertEqualPoint(finalAttribute.center, attribute.center.x + offset.x ,attribute.center.y + offset.y);
+}
+
+- (void)test_whenModifyingInitialAndFinalAttribute_withoutTransitionDelegate_thatLayoutIsCorrect {
+    // set up the custom layout
+    IGListCollectionViewLayout *layout = [[IGListCollectionViewLayout alloc] initWithStickyHeaders:NO topContentInset:0 stretchToEdge:YES];
+    self.collectionView.collectionViewLayout = layout;
+
+    IGTestObject *object = genTestObject(@1, @2);
+    [self setupWithObjects:@ [object]];
+
+    // When no transition delegate is set, the initial and final layout methods no-op, so these values should all match
+    NSIndexPath *indexPath = genIndexPath(0, 0);
+    UICollectionViewLayoutAttributes *attribute = [layout layoutAttributesForItemAtIndexPath:indexPath];
+    UICollectionViewLayoutAttributes *initialAttribute = [layout initialLayoutAttributesForAppearingItemAtIndexPath:indexPath];
+    UICollectionViewLayoutAttributes *finalAttribute = [layout finalLayoutAttributesForDisappearingItemAtIndexPath:indexPath];
+
+    IGAssertEqualPoint(attribute.center, initialAttribute.center.x, initialAttribute.center.y);
+    IGAssertEqualPoint(attribute.center, finalAttribute.center.x, finalAttribute.center.y);
 }
 
 - (void)test_whenSwappingCollectionViewsAfterUpdate_thatUpdatePerformedOnTheCorrectCollectionView {
@@ -2622,6 +2641,22 @@
         // CollectionView: 2 sections
     }];
 
+    [self waitForExpectationsWithTimeout:30 handler:nil];
+}
+
+- (void)test_whenSectionControllerNotSubclassed_thatDoesNotCrash {
+    // We need a custom layout that creates attributes for all cells, even the ones with size
+    // zero, so that the UICollectionView requests all cells. Using `UICollectionViewDelegateFlowLayout`
+    // doesn't crash, because it doesn't seem to return attributes where the size is zero.
+    self.collectionView.collectionViewLayout = [IGListTestCollectionViewLayout new];
+
+    [self setupWithObjects:@[kIGTestDelegateDataSourceNoSectionControllerSubclass]];
+
+    XCTestExpectation *expectation = genExpectation;
+    [self.adapter reloadDataWithCompletion:^(BOOL finished) {
+        [self.collectionView layoutIfNeeded];
+        [expectation fulfill];
+    }];
     [self waitForExpectationsWithTimeout:30 handler:nil];
 }
 

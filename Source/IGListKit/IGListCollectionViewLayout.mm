@@ -376,6 +376,11 @@ static void adjustZIndexForAttributes(UICollectionViewLayoutAttributes *attribut
     }
 }
 
+- (void)invalidateLayout {
+    _minimumInvalidatedSection = 0;
+    [super invalidateLayout];
+}
+
 - (void)invalidateLayoutWithContext:(IGListCollectionViewLayoutInvalidationContext *)context {
     BOOL hasInvalidatedItemIndexPaths = NO;
     if ([context respondsToSelector:@selector(invalidatedItemIndexPaths)]) {
@@ -384,11 +389,9 @@ static void adjustZIndexForAttributes(UICollectionViewLayoutAttributes *attribut
 
     if (hasInvalidatedItemIndexPaths
         || [context invalidateEverything]
+        || ([context invalidateDataSourceCounts] && _minimumInvalidatedSection == NSNotFound) // if count changed and we don't have information on the minimum invalidated section
         || context.ig_invalidateAllAttributes) {
         // invalidates all
-        _minimumInvalidatedSection = 0;
-    } else if ([context invalidateDataSourceCounts] && _minimumInvalidatedSection == NSNotFound) {
-        // invalidate all if count changed and we don't have information on the minimum invalidated section
         _minimumInvalidatedSection = 0;
     }
 
@@ -471,11 +474,7 @@ static void adjustZIndexForAttributes(UICollectionViewLayoutAttributes *attribut
 - (void)_calculateLayoutIfNeeded {
     if (_minimumInvalidatedSection == NSNotFound) {
         return;
-    }
-
-    // purge attribute caches so they are rebuilt
-    [_attributesCache removeAllObjects];
-    [self _resetSupplementaryAttributesCache];
+    }    
 
     UICollectionView *collectionView = self.collectionView;
     id<UICollectionViewDelegateFlowLayout> delegate = (id<UICollectionViewDelegateFlowLayout>)collectionView.delegate;
@@ -537,6 +536,8 @@ static void adjustZIndexForAttributes(UICollectionViewLayoutAttributes *attribut
 
         for (NSInteger item = 0; item < itemCount; item++) {
             NSIndexPath *indexPath = [NSIndexPath indexPathForItem:item inSection:section];
+            // Following method subsequentally calls -layoutAttributesForItemAtIndexPath: and caches attributes that are not ready yet (we only calculate them at the end of this for loop)
+            // This results in _attributesCache[indexPath] being set to incorrect value. If we end up calling prepareLayout in response to frame change we
             const CGSize size = [delegate collectionView:collectionView layout:self sizeForItemAtIndexPath:indexPath];
 
             IGAssert(CGSizeGetLengthInDirection(size, fixedDirection) <= paddedLengthInFixedDirection
@@ -652,6 +653,12 @@ static void adjustZIndexForAttributes(UICollectionViewLayoutAttributes *attribut
         _sectionData[section].lastItemCoordInFixedDirection = itemCoordInFixedDirection;
         _sectionData[section].lastNextRowCoordInScrollDirection = nextRowCoordInScrollDirection;
     }
+
+    // Reason we are purging attributes at the end is because in some circumstances calling
+    // -[delegate collectionView: layout: sizeForItemAtIndexPath:] results in creating the cache with incorrect values
+    // See the comment next to the call for more information
+    [_attributesCache removeAllObjects];
+    [self _resetSupplementaryAttributesCache];
 
     _minimumInvalidatedSection = NSNotFound;
 }

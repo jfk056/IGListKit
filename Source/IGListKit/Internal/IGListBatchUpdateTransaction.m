@@ -143,7 +143,7 @@ typedef NS_ENUM (NSInteger, IGListBatchUpdateTransactionMode) {
             [self _reload];
         } else if (self.sectionData && [self.collectionView numberOfSections] != self.sectionData.fromObjects.count) {
             // If data is nil, there are no section updates.
-            IGFailAssert(@"The UICollectionView's section count (%li) didn't match the IGListAdapter's count (%li), so we can't performBatchUpdates. Falling back to reloadData.",
+            IGWarnAssert(@"The UICollectionView's section count (%li) didn't match the IGListAdapter's count (%li), so we can't performBatchUpdates. Falling back to reloadData.",
                          (long)[self.collectionView numberOfSections],
                          (long)self.sectionData.fromObjects.count);
             [self _reload];
@@ -217,7 +217,10 @@ willPerformBatchUpdatesWithCollectionView:self.collectionView
         }
     }
     @catch (NSException *exception) {
-        if ([[exception name] isEqualToString:NSInternalInconsistencyException]) {
+        /// Currently, we don't throw on `NSInternalInconsistencyException`, like the comment below explains. This was a temporary workaround for the large
+        /// volume of exceptions that started with Xcode 14.3. Now, lets use this experiment flag to slowly reintroduce it, and eventually remove the workaround.
+        const BOOL ignoreException = !IGListExperimentEnabled(self.config.experiments, IGListExperimentThrowOnInconsistencyException);
+        if (ignoreException && [[exception name] isEqualToString:NSInternalInconsistencyException]) {
             /// As part of S342566 we have to recover from crashing the app since Xcode 14.3 has shipped
             /// with a different build SDK that changes the runtime behavior of -performBatchUpdates: issues.
             /// When we are performing batch updates, it's on us to advance the data source to the new state
@@ -231,7 +234,7 @@ willPerformBatchUpdatesWithCollectionView:self.collectionView
             /// with our product team to properly fix their data source changes outside of the -performBatchUpdatesBlock:
             /// IGLisKit processed a new being as an assert that requires investigation,
             /// since it will be processed as invalid data source state that needs a reload.
-            IGFailure(@"The data source returned an invalid number of sections and rows due to updates applied outside of the performBatchUpdates block. This will cause a crash.");
+            IGFailure(@"IGListKit caught exception (%@): %@", exception.name, exception.reason);
             [self begin];
             return;
         } else {
