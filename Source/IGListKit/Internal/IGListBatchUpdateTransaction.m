@@ -26,6 +26,7 @@
 #import "IGListReloadIndexPath.h"
 #import "IGListTransitionData.h"
 #import "UICollectionView+IGListBatchUpdateData.h"
+#import "IGListPerformDiff.h"
 
 typedef NS_ENUM (NSInteger, IGListBatchUpdateTransactionMode) {
     IGListBatchUpdateTransactionModeCancellable,
@@ -109,19 +110,14 @@ typedef NS_ENUM (NSInteger, IGListBatchUpdateTransactionMode) {
     IGListTransitionData *data = self.sectionData;
     [self.delegate listAdapterUpdater:self.updater willDiffFromObjects:data.fromObjects toObjects:data.toObjects];
 
-    const BOOL onBackground = self.config.allowsBackgroundDiffing;
-    if (onBackground) {
-        __weak __typeof__(self) weakSelf = self;
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            IGListIndexSetResult *result = IGListDiff(data.fromObjects, data.toObjects, IGListDiffEquality);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [weakSelf _didDiff:result onBackground:onBackground];
-            });
-        });
-    } else {
-        IGListIndexSetResult *result = IGListDiff(data.fromObjects, data.toObjects, IGListDiffEquality);
-        [self _didDiff:result onBackground:onBackground];
-    }
+    __weak __typeof__(self) weakSelf = self;
+    IGListPerformDiffWithData(data,
+                              self.collectionView,
+                              self.config.allowsBackgroundDiffing,
+                              self.config.adaptiveDiffingExperimentConfig,
+                              ^(IGListIndexSetResult * _Nonnull result, BOOL onBackground) {
+        [weakSelf _didDiff:result onBackground:onBackground];
+    });
 }
 
 - (void)_didDiff:(IGListIndexSetResult *)diffResult onBackground:(BOOL)onBackground {
@@ -136,7 +132,10 @@ typedef NS_ENUM (NSInteger, IGListBatchUpdateTransactionMode) {
     [self.delegate listAdapterUpdater:self.updater didDiffWithResults:diffResult onBackgroundThread:onBackground];
 
     @try {
-        if (self.collectionView.dataSource == nil) {
+        // Keeping a pointer to self.collectionView.dataSource, because it can get deallocated before the UICollectionView and crash
+        id<UICollectionViewDataSource> const collectionViewDataSource = self.collectionView.dataSource;
+
+        if (collectionViewDataSource == nil) {
             // If the data source is nil, we should not call any collection view update.
             [self _bail];
         } else if (diffResult.changeCount > 100 && self.config.allowsReloadingOnTooManyUpdates) {
@@ -169,37 +168,8 @@ willPerformBatchUpdatesWithCollectionView:self.collectionView
                             toObjects:self.sectionData.toObjects
                    listIndexSetResult:diffResult
                              animated:self.animated];
-
-    // Experiment to skip calling `[UICollectionView performBatchUpdates ...]` if we don't have changes. It does
-    // require us to call `_applyDataUpdates` outside the update block, but that should be ok as long as we call
-    // `performBatchUpdates` right after.
-    const BOOL skipPerformUpdateIfPossible = IGListExperimentEnabled(self.config.experiments, IGListExperimentSkipPerformUpdateIfPossible);
-    if (skipPerformUpdateIfPossible) {
-        // From Apple docs: If the collection view's layout is not up to date before you call performBatchUpdates, a reload may
-        // occur. To avoid problems, you should update your data model inside the updates block or ensure the layout is
-        // updated before you call performBatchUpdates(_:completion:).
-        [self.collectionView layoutIfNeeded];
-
-        [self _applyDataUpdates];
-
-        if (!diffResult.hasChanges && !self.inUpdateItemCollector.hasChanges) {
-            // If we don't have any section or item changes, take a shortcut.
-            [self _finishWithoutUpdate];
-            return;
-        }
-    }
-
-    // **************************
-    // **************************
-    // IMPORTANT: The very next thing we call must be `[UICollectionView performBatchUpdates ...]`, because
-    // we're in a state where the adapter is synced, but not the `UICollectionView`.
-    // **************************
-    // **************************
-
     void (^updates)(void) = ^ {
-        if (!skipPerformUpdateIfPossible) {
-            [self _applyDataUpdates];
-        }
+        [self _applyDataUpdates];
         [self _applyCollectioViewUpdates:diffResult];
     };
 

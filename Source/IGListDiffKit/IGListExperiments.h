@@ -18,15 +18,43 @@ typedef NS_OPTIONS (NSInteger, IGListExperiment) {
     IGListExperimentNone = 1 << 1,
     /// Test invalidating layout when cell reloads/updates in IGListBindingSectionController.
     IGListExperimentInvalidateLayoutForUpdates = 1 << 2,
-    /// Test skipping performBatchUpdate if we don't have any updates.
-    IGListExperimentSkipPerformUpdateIfPossible = 1 << 3,
-    /// Test skipping creating {view : section controller} map, which has inconsistency issue.
-    IGListExperimentSkipViewSectionControllerMap = 1 << 4,
-    /// Use the correct section index when calling -[IGListAdapter reloadObjects ...] within the update block.
-    IGListExperimentFixCrashOnReloadObjects = 1 << 5,
     /// Throw NSInternalInconsistencyException during an update
-    IGListExperimentThrowOnInconsistencyException = 1 << 6
+    IGListExperimentThrowOnInconsistencyException = 1 << 3,
+    /// Remove the early exit so multiple updates can't happen at once
+    IGListExperimentRemoveDataSourceChangeEarlyExit = 1 << 4,
 };
+
+/**
+ Customize how diffing is performed
+ */
+NS_SWIFT_NAME(ListAdaptiveDiffingExperimentConfig)
+typedef struct IGListAdaptiveDiffingExperimentConfig {
+    /// Enabled experimental code path. This needs to be enabled for the other properties to take effect.
+    BOOL enabled;
+    /// Enable higher background thread priority
+    BOOL higherQOSEnabled;
+    /// If both item counts are under this number, we'll run the diffing on the main thread.
+    NSInteger maxItemCountToRunOnMain;
+    /// Lower QOS if view is not visible according to `IGListViewVisibilityTracker`
+    BOOL lowerPriorityWhenViewNotVisible;
+} IGListAdaptiveDiffingExperimentConfig;
+
+/**
+ Customize how coalescing works to speed up some updates
+ */
+NS_SWIFT_NAME(ListAdaptiveCoalescingExperimentConfig)
+typedef struct IGListAdaptiveCoalescingExperimentConfig {
+    /// Enable adaptive coalescing, where we try to mininimize the update delay
+    BOOL enabled;
+    /// Start coalescing if the last update was within this interval
+    NSTimeInterval minInterval;
+    /// If we need to coalesce, increase the interval by this much for next time.
+    NSTimeInterval intervalIncrement;
+    /// This is the maximum coalesce interval, so the slowest and update can wait.
+    NSTimeInterval maxInterval;
+    /// Coalece using `maxInterval` if view is not visible according to `IGListViewVisibilityTracker`
+    BOOL useMaxIntervalWhenViewNotVisible;
+} IGListAdaptiveCoalescingExperimentConfig;
 
 /**
  Check if an experiment is enabled in a bitmask.

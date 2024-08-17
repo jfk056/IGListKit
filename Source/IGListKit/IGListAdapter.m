@@ -13,11 +13,12 @@
 #import <IGListDiffKit/IGListAssert.h>
 #endif
 #import "IGListAdapterUpdater.h"
-#import "IGListSupplementaryViewSource.h"
 
 #import "IGListArrayUtilsInternal.h"
 #import "IGListDebugger.h"
+#import "IGListDefaultExperiments.h"
 #import "IGListSectionControllerInternal.h"
+#import "IGListSupplementaryViewSource.h"
 #import "IGListTransitionData.h"
 #import "IGListUpdatingDelegate.h"
 #import "UICollectionViewLayout+InteractiveReordering.h"
@@ -27,11 +28,6 @@ typedef struct OffsetRange {
     CGFloat min;
     CGFloat max;
 } OffsetRange;
-
-@interface IGListAdapter ()
-// Temporary param to key the old behavior during testing
-@property (nonatomic, assign) BOOL legacyIsInDataUpdateBlock;
-@end
 
 @implementation IGListAdapter {
     NSMapTable<UICollectionReusableView *, IGListSectionController *> *_viewSectionControllerMap;
@@ -68,6 +64,8 @@ typedef struct OffsetRange {
 
         _updater = updater;
         _viewController = viewController;
+
+        _experiments = IGListDefaultExperiments();
 
         [IGListDebugger trackAdapter:self];
     }
@@ -583,41 +581,23 @@ typedef struct OffsetRange {
 - (NSArray *)visibleObjects {
     IGAssertMainThread();
 
-    if (IGListExperimentEnabled(_experiments, IGListExperimentSkipViewSectionControllerMap)) {
-        NSArray<NSIndexPath *> *visibleIndexPaths = [self.collectionView indexPathsForVisibleItems];
-        NSMutableIndexSet *visibleSections = [NSMutableIndexSet new];
-        [visibleIndexPaths enumerateObjectsUsingBlock:^(NSIndexPath * _Nonnull indexPath, NSUInteger idx, BOOL * _Nonnull stop) {
-            [visibleSections addIndex:indexPath.section];
-        }];
-
-        NSMutableArray *visibleObjects = [NSMutableArray new];
-        [visibleSections enumerateIndexesUsingBlock:^(NSUInteger section, BOOL * _Nonnull stop) {
-            id object = [self objectAtSection:section];
-            IGAssert(object != nil, @"Object not found at section %li", (long)section);
-            if (object != nil) {
-                [visibleObjects addObject:object];
-            }
-        }];
-        return visibleObjects;
-    } else {
-        NSArray<UICollectionViewCell *> *visibleCells = [self.collectionView visibleCells];
-        NSMutableSet *visibleObjects = [NSMutableSet new];
-        for (UICollectionViewCell *cell in visibleCells) {
-            IGListSectionController *sectionController = [self _sectionControllerForCell:cell];
-            IGAssert(sectionController != nil, @"Section controller nil for cell %@", cell);
-            if (sectionController != nil) {
-                const NSInteger section = [self sectionForSectionController:sectionController];
-                if (section != NSNotFound) {
-                    id object = [self objectAtSection:section];
-                    IGAssert(object != nil, @"Object not found for section controller %@ at section %li", sectionController, (long)section);
-                    if (object != nil) {
-                        [visibleObjects addObject:object];
-                    }
+    NSArray<UICollectionViewCell *> *visibleCells = [self.collectionView visibleCells];
+    NSMutableSet *visibleObjects = [NSMutableSet new];
+    for (UICollectionViewCell *cell in visibleCells) {
+        IGListSectionController *sectionController = [self _sectionControllerForCell:cell];
+        IGAssert(sectionController != nil, @"Section controller nil for cell %@", cell);
+        if (sectionController != nil) {
+            const NSInteger section = [self sectionForSectionController:sectionController];
+            if (section != NSNotFound) {
+                id object = [self objectAtSection:section];
+                IGAssert(object != nil, @"Object not found for section controller %@ at section %li", sectionController, (long)section);
+                if (object != nil) {
+                    [visibleObjects addObject:object];
                 }
             }
         }
-        return [visibleObjects allObjects];
     }
+    return [visibleObjects allObjects];
 }
 
 - (NSArray<UICollectionViewCell *> *)visibleCellsForObject:(id)object {
@@ -709,7 +689,7 @@ typedef struct OffsetRange {
                     dataSource, object);
             return;
         }
-        
+
         if ([sectionController isMemberOfClass:[IGListSectionController class]]) {
             // If IGListSectionController is not subclassed, it could be a side effect of a problem. For example, nothing stops
             // dataSource from returning a plain IGListSectionController if it doesn't recognize the object type, instead of throwing.
@@ -916,12 +896,7 @@ typedef struct OffsetRange {
 }
 
 - (BOOL)isInDataUpdateBlock {
-    if (IGListExperimentEnabled(_experiments, IGListExperimentFixCrashOnReloadObjects)) {
-        // The updater has a better picture of when we're updating the data, including both section and item level changes.
-        return self.updater.isInDataUpdateBlock;
-    } else {
-        return self.legacyIsInDataUpdateBlock;
-    }
+    return self.updater.isInDataUpdateBlock;
 }
 
 #pragma mark - UIScrollViewDelegate
@@ -1053,14 +1028,8 @@ typedef struct OffsetRange {
         // this association is created in -collectionView:cellForItemAtIndexPath:
         UICollectionViewCell *cell = [self.collectionView cellForItemAtIndexPath:indexPath];
 
-        if (IGListExperimentEnabled(_experiments, IGListExperimentSkipViewSectionControllerMap)) {
-            if ([self sectionControllerForSection:indexPath.section] == sectionController) {
-                return cell;
-            }
-        } else {
-            if ([self _sectionControllerForCell:cell] == sectionController) {
-                return cell;
-            }
+        if ([self _sectionControllerForCell:cell] == sectionController) {
+            return cell;
         }
     }
     return nil;
@@ -1084,14 +1053,8 @@ typedef struct OffsetRange {
         // only return a supplementary view if it belongs to the section controller
         UICollectionReusableView *view = [self.collectionView supplementaryViewForElementKind:elementKind atIndexPath:indexPath];
 
-        if (IGListExperimentEnabled(_experiments, IGListExperimentSkipViewSectionControllerMap)) {
-            if ([self sectionControllerForSection:indexPath.section] == sectionController) {
-                return view;
-            }
-        } else {
-            if ([self sectionControllerForView:view] == sectionController) {
-                return view;
-            }
+        if ([self sectionControllerForView:view] == sectionController) {
+            return view;
         }
     }
     return nil;
@@ -1294,10 +1257,8 @@ typedef struct OffsetRange {
     [self _enterBatchUpdates];
     __weak __typeof__(self) weakSelf = self;
     [self.updater performUpdateWithCollectionViewBlock:[self _collectionViewBlock] animated:animated itemUpdates:^{
-        weakSelf.legacyIsInDataUpdateBlock = YES;
         // the adapter acts as the batch context with its API stripped to just the IGListBatchContext protocol
         updates(weakSelf);
-        weakSelf.legacyIsInDataUpdateBlock = NO;
     } completion: ^(BOOL finished) {
         [weakSelf _updateBackgroundView];
         [weakSelf _notifyDidUpdate:IGListAdapterUpdateTypeItemUpdates animated:animated];
@@ -1410,7 +1371,7 @@ typedef struct OffsetRange {
 
     NSArray *indexPaths = [self indexPathsFromSectionController:sectionController indexes:indexes usePreviousIfInUpdateBlock:NO];
     [self.updater insertItemsIntoCollectionView:collectionView indexPaths:indexPaths];
-    
+
     if (![self isInDataUpdateBlock]) {
         [self _updateBackgroundView];
     }
@@ -1429,7 +1390,7 @@ typedef struct OffsetRange {
 
     NSArray *indexPaths = [self indexPathsFromSectionController:sectionController indexes:indexes usePreviousIfInUpdateBlock:YES];
     [self.updater deleteItemsFromCollectionView:collectionView indexPaths:indexPaths];
-    
+
     if (![self isInDataUpdateBlock]) {
         [self _updateBackgroundView];
     }

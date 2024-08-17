@@ -669,9 +669,6 @@
 }
 
 - (void)test_whenReloadingItems_inItemUpdateBlock_thatDoesntCrash {
-    self.adapter.experiments |= IGListExperimentFixCrashOnReloadObjects;
-    // Without this fix, this test crashes with: Terminating app due to uncaught exception 'NSRangeException', reason: '*** -[__NSArrayI objectAtIndexedSubscript:]: index 2 beyond bounds [0 .. 1]'
-
     [self setupWithObjects:@[
         genTestObject(@1, @1),
         genTestObject(@2, @2),
@@ -1931,7 +1928,7 @@
         adapter.collectionView = self.collectionView;
         adapter.dataSource = self.dataSource;
         [adapter performUpdatesAnimated:NO completion:^(BOOL finished) {
-            XCTAssertTrue(NO, @"Should not reach completion block for adapter");
+            XCTFail(@"Should not reach completion block for adapter");
         }];
     }
 
@@ -2650,11 +2647,76 @@
     // doesn't crash, because it doesn't seem to return attributes where the size is zero.
     self.collectionView.collectionViewLayout = [IGListTestCollectionViewLayout new];
 
+    XCTExpectFailureWithOptions(@"When IGListSectionController isn't subclassed, expect an assertion failure, but avoid a crash.",
+                                [XCTExpectedFailureOptions nonStrictOptions]);
     [self setupWithObjects:@[kIGTestDelegateDataSourceNoSectionControllerSubclass]];
 
     XCTestExpectation *expectation = genExpectation;
     [self.adapter reloadDataWithCompletion:^(BOOL finished) {
         [self.collectionView layoutIfNeeded];
+        [expectation fulfill];
+    }];
+    [self waitForExpectationsWithTimeout:30 handler:nil];
+}
+
+- (void)test_whenPerformingUpdates_withAdaptiveDiffing_thatCollectionViewCountsUpdate {
+    IGListAdapterUpdater *updater = (IGListAdapterUpdater *)self.updater;
+    updater.allowsBackgroundDiffing = YES;
+    updater.adaptiveDiffingExperimentConfig = (IGListAdaptiveDiffingExperimentConfig) {
+        .enabled = YES,
+    };
+    
+    [self setupWithObjects:@[
+        genTestObject(@1, @1),
+        genTestObject(@2, @2),
+        genTestObject(@3, @3),
+    ]];
+
+    self.dataSource.objects = @[
+        genTestObject(@2, @2),
+        genTestObject(@1, @1), // moved from index 0 to 1
+        genTestObject(@3, @3),
+        genTestObject(@4, @4), // new
+    ];
+
+    XCTestExpectation *expectation = genExpectation;
+    [self.adapter performUpdatesAnimated:YES completion:^(BOOL finished2) {
+        XCTAssertEqual([self.collectionView numberOfSections], 4);
+        XCTAssertEqual([self.collectionView numberOfItemsInSection:0], 2);
+        XCTAssertEqual([self.collectionView numberOfItemsInSection:1], 1);
+        XCTAssertEqual([self.collectionView numberOfItemsInSection:2], 3);
+        XCTAssertEqual([self.collectionView numberOfItemsInSection:3], 4);
+        [expectation fulfill];
+    }];
+    [self waitForExpectationsWithTimeout:30 handler:nil];
+}
+
+- (void)test_whenPerformingUpdates_withAdaptiveCoalescing_thatCollectionViewCountsUpdate {
+    IGListAdapterUpdater *updater = (IGListAdapterUpdater *)self.updater;
+    updater.adaptiveCoalescingExperimentConfig = (IGListAdaptiveCoalescingExperimentConfig) {
+        .enabled = YES,
+    };
+    
+    [self setupWithObjects:@[
+        genTestObject(@1, @1),
+        genTestObject(@2, @2),
+        genTestObject(@3, @3),
+    ]];
+
+    self.dataSource.objects = @[
+        genTestObject(@2, @2),
+        genTestObject(@1, @1), // moved from index 0 to 1
+        genTestObject(@3, @3),
+        genTestObject(@4, @4), // new
+    ];
+
+    XCTestExpectation *expectation = genExpectation;
+    [self.adapter performUpdatesAnimated:YES completion:^(BOOL finished2) {
+        XCTAssertEqual([self.collectionView numberOfSections], 4);
+        XCTAssertEqual([self.collectionView numberOfItemsInSection:0], 2);
+        XCTAssertEqual([self.collectionView numberOfItemsInSection:1], 1);
+        XCTAssertEqual([self.collectionView numberOfItemsInSection:2], 3);
+        XCTAssertEqual([self.collectionView numberOfItemsInSection:3], 4);
         [expectation fulfill];
     }];
     [self waitForExpectationsWithTimeout:30 handler:nil];
